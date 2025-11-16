@@ -8,9 +8,9 @@ add_action('admin_menu', function () {
 
 add_action('admin_enqueue_scripts', function ($hook) {
     if (strpos($hook, 'user-sheet-sync') === false) return;
-    wp_enqueue_style('wp-user-gsheet-admin-style', plugin_dir_url(__FILE__) . '../assets/admin-style.css');
+    wp_enqueue_style('wp-user-gsheet-admin-style', plugin_dir_url(__FILE__) . '../assets/admin-style.css', [], '2.5');
     wp_enqueue_script('jquery');
-});
+}, 20);
 
 function wp_user_gsheet_list_page() {
     $configs = get_option('wp_user_gsheet_sync_configs', []);
@@ -21,34 +21,63 @@ function wp_user_gsheet_list_page() {
         unset($configs[$index]);
         $configs = array_values($configs);
         update_option('wp_user_gsheet_sync_configs', $configs);
-        // Clear last sync times for deleted config
-        delete_option("wp_user_gsheet_last_sync_wp_to_sheet_$index");
         delete_option("wp_user_gsheet_last_sync_sheet_to_wp_$index");
         echo '<div class="updated"><p>Sheet deleted!</p></div>';
     }
 
-    if (isset($_POST['sync_sheet'])) {
+    if ($action === 'duplicate' && $index >= 0 && isset($configs[$index]) && check_admin_referer('duplicate_config_' . $index)) {
+        $original_config = $configs[$index];
+        $new_config = $original_config;
+        $base_name = $original_config['name'] ?: 'Unnamed #' . ($index + 1);
+        $new_name = $base_name . ' Copy';
+        $suffix = 1;
+        while (array_reduce($configs, function ($carry, $config) use ($new_name) {
+            return $carry || ($config['name'] === $new_name);
+        }, false)) {
+            $new_name = $base_name . ' Copy ' . $suffix++;
+        }
+        $new_config['name'] = $new_name;
+        $configs[] = $new_config;
+        update_option('wp_user_gsheet_sync_configs', $configs);
+        echo '<div class="updated"><p>Sheet duplicated as "' . esc_html($new_name) . '"!</p></div>';
+    }
+
+    if (isset($_POST['sync_sheet']) && check_admin_referer('sync_sheet_' . $_POST['index'])) {
         $index = intval($_POST['index']);
         $config = $configs[$index] ?? null;
         if ($config) {
             $sync = new WP_User_GSheet_Sync($config);
-            $sync->sync_sheet_to_wp();
+            $result = $sync->sync_sheet_to_wp();
             update_option("wp_user_gsheet_last_sync_sheet_to_wp_$index", time());
-            echo '<div class="updated"><p>Sheet → WP sync done for ' . esc_html($config['name']) . '!</p></div>';
+            $message = 'Sheet → WP sync for "' . esc_html($config['name']) . '": ' . 
+                       $result['created'] . ' users created, ' . 
+                       $result['updated'] . ' users updated, ' . 
+                       $result['skipped'] . ' rows skipped.';
+            if (!empty($result['errors'])) {
+                $message .= '<br>Errors: ' . implode('; ', array_map('esc_html', $result['errors']));
+                echo '<div class="error"><p>' . $message . '</p></div>';
+            } else {
+                echo '<div class="updated"><p>' . $message . '</p></div>';
+            }
         } else {
             echo '<div class="error"><p>Invalid configuration index!</p></div>';
         }
     }
-    if (isset($_POST['sync_wp'])) {
-        $index = intval($_POST['index']);
-        $config = $configs[$index] ?? null;
-        if ($config) {
-            $sync = new WP_User_GSheet_Sync($config);
-            $sync->sync_all_wp_to_sheet();
-            update_option("wp_user_gsheet_last_sync_wp_to_sheet_$index", time());
-            echo '<div class="updated"><p>WP → Sheet sync done for ' . esc_html($config['name']) . '!</p></div>';
+
+    if ($action === 'view_logs') {
+        $log_file = WP_CONTENT_DIR . '/debug.log';
+        if (file_exists($log_file)) {
+            $logs = file($log_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            $logs = array_filter($logs, function($line) {
+                return strpos($line, 'WP User GSheet Sync') !== false;
+            });
+            $logs = array_slice(array_reverse($logs), 0, 50); // Last 50 relevant lines
+            echo '<div class="wrap"><h2>Recent Sync Logs</h2><pre style="max-height: 400px; overflow-y: scroll;">';
+            echo esc_html(implode("\n", $logs));
+            echo '</pre><p><a href="' . admin_url('admin.php?page=user-sheet-sync') . '" class="button">Back to Configurations</a></p></div>';
+            return;
         } else {
-            echo '<div class="error"><p>Invalid configuration index!</p></div>';
+            echo '<div class="error"><p>Debug log file not found. Ensure WP_DEBUG_LOG is enabled in wp-config.php.</p></div>';
         }
     }
 
@@ -90,7 +119,6 @@ function wp_user_gsheet_list_page() {
                 'credentials' => '',
                 'fields' => $default_fields,
                 'roles' => ['company'],
-                'auto_sync_wp_to_sheet' => false,
                 'auto_sync_sheet_to_wp' => false,
                 'sync_interval' => 'hourly',
             ]
@@ -100,12 +128,13 @@ function wp_user_gsheet_list_page() {
     ?>
     <div class="wrap gsheet-config-list">
         <h1>User Sheet Sync Configurations</h1>
-        <p>Manage multiple Google Sheet sync configurations for selected user roles.</p>
+        <p>Manage multiple Google Sheet sync configurations for selected user roles. Google Sheets is the master source, and WordPress only updates the ID column.</p>
         <?php if (empty(get_option('wp_user_gsheet_global_credentials', ''))): ?>
             <div class="error"><p>Warning: No global Service Account JSON is set. Please configure it in <a href="<?php echo admin_url('admin.php?page=user-sheet-sync-global'); ?>">Global Settings</a>.</p></div>
         <?php endif; ?>
         <p style="display:inline;"><a href="<?php echo admin_url('admin.php?page=user-sheet-sync-global'); ?>" class="button">Settings</a></p>
         <p style="display:inline;"><a href="<?php echo admin_url('admin.php?page=user-sheet-sync-guide'); ?>" class="button">Setup Guide</a></p>
+        <p style="display:inline;"><a href="<?php echo admin_url('admin.php?page=user-sheet-sync&action=view_logs'); ?>" class="button">View Logs</a></p>
         <a href="<?php echo admin_url('admin.php?page=user-sheet-sync-add'); ?>" class="button button-primary">Add New Sheet</a>
         <table class="wp-list-table widefat fixed striped">
             <thead>
@@ -125,20 +154,17 @@ function wp_user_gsheet_list_page() {
                         <td>
                             <a href="<?php echo admin_url('admin.php?page=user-sheet-sync-add&action=edit&index=' . $i); ?>">Edit</a> |
                             <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=user-sheet-sync&action=delete&index=' . $i), 'delete_config_' . $i); ?>" onclick="return confirm('Are you sure?');">Delete</a> |
+                            <a href="<?php echo wp_nonce_url(admin_url('admin.php?page=user-sheet-sync&action=duplicate&index=' . $i), 'duplicate_config_' . $i); ?>">Duplicate</a> |
                             <form method="post" style="display:inline;">
+                                <?php wp_nonce_field('sync_sheet_' . $i); ?>
                                 <input type="hidden" name="index" value="<?php echo $i; ?>">
                                 <button type="submit" name="sync_sheet" class="button-link">Sheet → WP</button>
-                            </form> |
-                            <form method="post" style="display:inline;">
-                                <input type="hidden" name="index" value="<?php echo $i; ?>">
-                                <button type="submit" name="sync_wp" class="button-link">WP → Sheet</button>
                             </form>
                         </td>
                     </tr>
                 <?php endforeach; ?>
             </tbody>
         </table>
-
     </div>
     <?php
 }
@@ -154,11 +180,9 @@ function wp_user_gsheet_edit_page() {
         'credentials' => '',
         'fields' => [],
         'roles' => ['company'],
-        'auto_sync_wp_to_sheet' => false,
         'auto_sync_sheet_to_wp' => false,
         'sync_interval' => 'hourly',
     ];
-    // Ensure roles is always an array
     $config['roles'] = isset($config['roles']) && is_array($config['roles']) ? $config['roles'] : [];
     $error = '';
 
@@ -170,7 +194,6 @@ function wp_user_gsheet_edit_page() {
             'credentials' => isset($_POST['credentials']) ? wp_unslash(sanitize_textarea_field($_POST['credentials'])) : '',
             'fields' => [],
             'roles' => isset($_POST['roles']) && is_array($_POST['roles']) ? array_map('sanitize_text_field', $_POST['roles']) : [],
-            'auto_sync_wp_to_sheet' => !empty($_POST['auto_sync_wp_to_sheet']),
             'auto_sync_sheet_to_wp' => !empty($_POST['auto_sync_sheet_to_wp']),
             'sync_interval' => in_array($_POST['sync_interval'] ?? '', ['five_minutes', 'hourly', 'daily']) ? sanitize_text_field($_POST['sync_interval']) : 'hourly',
         ];
@@ -244,11 +267,7 @@ function wp_user_gsheet_edit_page() {
                 <tr>
                     <th>Auto-Sync Settings</th>
                     <td>
-                        <p>Configure automatic syncing via cron.</p>
-                        <label>
-                            <input type="checkbox" name="auto_sync_wp_to_sheet" value="1" <?php checked(!empty($config['auto_sync_wp_to_sheet'])); ?>>
-                            Enable WP → Sheet Auto-Sync
-                        </label><br>
+                        <p>Configure automatic syncing from Google Sheet to WordPress via cron.</p>
                         <label>
                             <input type="checkbox" name="auto_sync_sheet_to_wp" value="1" <?php checked(!empty($config['auto_sync_sheet_to_wp'])); ?>>
                             Enable Sheet → WP Auto-Sync
