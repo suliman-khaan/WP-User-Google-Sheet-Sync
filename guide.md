@@ -1,1 +1,0 @@
-Ignore src, vendor, assets folder.

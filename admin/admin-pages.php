@@ -7,10 +7,11 @@ add_action('admin_menu', function () {
 });
 
 add_action('admin_enqueue_scripts', function ($hook) {
+    // Only load on our specific plugin pages for performance
     if (strpos($hook, 'user-sheet-sync') === false) return;
-    wp_enqueue_style('wp-user-gsheet-admin-style', plugin_dir_url(__FILE__) . '../assets/admin-style.css', [], '2.5');
+    wp_enqueue_style('wp-user-gsheet-admin-style', plugin_dir_url(__FILE__) . '../assets/admin-style.css', [], '2.6');
     wp_enqueue_script('jquery');
-}, 20);
+});
 
 function wp_user_gsheet_list_page() {
     $configs = get_option('wp_user_gsheet_sync_configs', []);
@@ -43,6 +44,7 @@ function wp_user_gsheet_list_page() {
     }
 
     if (isset($_POST['sync_sheet']) && check_admin_referer('sync_sheet_' . $_POST['index'])) {
+        wp_user_gsheet_load_dependencies();
         $index = intval($_POST['index']);
         $config = $configs[$index] ?? null;
         if ($config) {

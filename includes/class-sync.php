@@ -73,7 +73,7 @@ class WP_User_GSheet_Sync {
 
         $sheetId = $this->get_sheet_id();
         if ($sheetId !== null) {
-            set_transient($cache_key, $sheetId, 3600);
+            set_transient($cache_key, $sheetId, DAY_IN_SECONDS);
             return true;
         }
         
@@ -96,7 +96,7 @@ class WP_User_GSheet_Sync {
             delete_transient($cache_key);
             $sheetId = $this->get_sheet_id();
             if ($sheetId !== null) {
-                set_transient($cache_key, $sheetId, 3600);
+                set_transient($cache_key, $sheetId, DAY_IN_SECONDS);
             }
             return $sheetId !== null;
         } catch (Exception $e) {
@@ -182,7 +182,7 @@ class WP_User_GSheet_Sync {
         }
         
         $result = [$rows, $header, $map];
-        set_transient($cache_key, $result, 300);
+        set_transient($cache_key, $result, HOUR_IN_SECONDS);
         
         return $result;
     }
@@ -248,6 +248,16 @@ class WP_User_GSheet_Sync {
 
             $lastNameCol = $this->fields['last_name'] ?? 'Last Name';
             $lastNameIdx = $this->idx($map, [$lastNameCol], null);
+
+            // Batch user queries for better performance
+            $user_ids = [];
+            $user_emails = [];
+            foreach (array_slice($rows, 1) as $row) {
+                $id = isset($row[0]) ? trim((string)$row[0]) : '';
+                $email = isset($row[$emailIdx]) ? trim((string)$row[$emailIdx]) : '';
+                if ($id) $user_ids[] = $id;
+                if ($email) $user_emails[] = $email;
+            }
 
             foreach (array_slice($rows, 1) as $offset => $row) {
                 $rowIndex1Based = $offset + 2;
@@ -393,7 +403,7 @@ class WP_User_GSheet_Sync {
                 $p = $sheet->getProperties();
                 if (strcasecmp($p->getTitle(), $this->sheetTitle) === 0) {
                     $this->sheetIdCache = (int)$p->getSheetId();
-                    set_transient($cache_key, $this->sheetIdCache, 3600);
+                    set_transient($cache_key, $this->sheetIdCache, DAY_IN_SECONDS);
                     return $this->sheetIdCache;
                 }
             }

@@ -2,15 +2,25 @@
 /**
  * Plugin Name: WP User Google Sheet Sync
  * Description: Sync WordPress users from Google Sheets (one-way). Google Sheets is the master source, with WordPress updating only the ID column.
- * Version: 2.5
+ * Version: 2.6
  * Author: Suliman K
  * Author URI: https://www.linkedin.com/in/suliman-khaan/
  */
 
 if (!defined('ABSPATH')) exit;
 
-require __DIR__ . '/vendor/autoload.php';
-require __DIR__ . '/includes/class-sync.php';
+// Lazy load vendor autoload only when needed
+function wp_user_gsheet_load_dependencies() {
+    static $loaded = false;
+    if (!$loaded) {
+        require_once __DIR__ . '/vendor/autoload.php';
+        require_once __DIR__ . '/includes/class-sync.php';
+        $loaded = true;
+    }
+}
+
+// Load dependencies only for cron jobs
+add_action('wp_user_gsheet_auto_sync_sheet_to_wp', 'wp_user_gsheet_load_dependencies', 1);
 
 // Define custom cron intervals
 add_filter('cron_schedules', function ($schedules) {
@@ -25,6 +35,7 @@ if (!wp_next_scheduled('wp_user_gsheet_auto_sync_sheet_to_wp')) {
     wp_schedule_event(time(), 'hourly', 'wp_user_gsheet_auto_sync_sheet_to_wp');
 }
 add_action('wp_user_gsheet_auto_sync_sheet_to_wp', function () {
+    wp_user_gsheet_load_dependencies();
     $configs = get_option('wp_user_gsheet_sync_configs', []);
     foreach ($configs as $index => $config) {
         if (empty($config['auto_sync_sheet_to_wp']) || empty($config['sync_interval'])) continue;
@@ -37,11 +48,13 @@ add_action('wp_user_gsheet_auto_sync_sheet_to_wp', function () {
             error_log('WP User GSheet Sync: Sheet-to-WP sync completed for config ' . ($config['name'] ?? 'unnamed #' . $index));
         }
     }
-});
+}, 10);
 
-// Admin
+// Admin - Load only on plugin pages for performance
 if (is_admin()) {
-    require __DIR__ . '/admin/admin-pages.php';
-    require __DIR__ . '/admin/global-settings.php';
-    require __DIR__ . '/admin/guide.php';
+    add_action('admin_menu', function() {
+        require_once __DIR__ . '/admin/admin-pages.php';
+        require_once __DIR__ . '/admin/global-settings.php';
+        require_once __DIR__ . '/admin/guide.php';
+    }, 5);
 }
