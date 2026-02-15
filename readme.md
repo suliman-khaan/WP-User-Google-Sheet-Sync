@@ -65,7 +65,7 @@ To use this plugin, you will need to create Google API credentials. The plugin i
 
 ## Requirements
 
-*   PHP 7.4 or higher.
+*   PHP 8.0 or higher.
 *   A Google Account and a Google Cloud Platform project.
 *   The plugin uses the official **Google API Client Library for PHP**. This library is included with the plugin, so you do not need to install it separately.
 
